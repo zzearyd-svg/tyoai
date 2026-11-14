@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Train Your Own Image AI</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script>window.tf || document.write('<script src="tf.min.js"><\/script>');</script>
+<style>
+:root{--bg:#fafaf7;--card:#fff;--text:#1d1d1b;--muted:#6b6b66;--line:#e2e1da;--accent:#5b4bdb;--accent-t:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16161a;--card:#1f1f25;--text:#ecece8;--muted:#9a9a94;--line:#33333b;--accent:#8c80ff;--accent-t:#111;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16161a;--card:#1f1f25;--text:#ecece8;--muted:#9a9a94;--line:#33333b;--accent:#8c80ff;--accent-t:#111;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}
+main{max-width:760px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:1.6rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+h2{font-size:1rem;margin:0 0 10px}
+.step{display:inline-block;background:var(--accent);color:var(--accent-t);border-radius:50%;width:22px;height:22px;text-align:center;font-size:.8rem;line-height:22px;margin-right:8px}
+button,label.btn{background:var(--accent);color:var(--accent-t);border:0;border-radius:10px;padding:9px 16px;font:inherit;cursor:pointer;display:inline-block}
+button.alt,label.btn.alt{background:transparent;color:var(--text);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.thumbs,.out{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.thumbs canvas{width:44px;height:44px;border-radius:6px;border:1px solid var(--line)}
+.out canvas{width:calc(25% - 6px);min-width:120px;aspect-ratio:1;border-radius:10px;border:1px solid var(--line);background:var(--bg)}
+.bar{height:8px;background:var(--line);border-radius:6px;overflow:hidden;margin-top:12px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+.muted{color:var(--muted);font-size:.9rem}
+input[type=range]{vertical-align:middle}
+.stat{font-variant-numeric:tabular-nums}
+input[type=text],textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;font-size:16px;margin:6px 0 10px}
+select{padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;font-size:16px;max-width:100%}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tabs button{background:transparent;color:var(--text);border:1px solid var(--line)}
+.tabs button.on{background:var(--accent);color:var(--accent-t);border-color:var(--accent)}
+.tout{white-space:pre-wrap;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:10px;min-height:60px;background:var(--bg)}
+</style>
+</head>
+<body>
+<main>
+<h1>Train Your Own Image AI</h1>
+<p class="sub">Everything runs in your browser. Your data never leaves your device.</p>
+<div class="tabs"><button id="tabI" class="on">Image AI</button><button id="tabT">Text AI</button></div>
+<div id="imgTab">
+
+<div class="card">
+<h2><span class="step">1</span>Give it images to learn from</h2>
+<input id="lbl" type="text" placeholder="Describe the images you’re adding, e.g. red flower">
+<p class="muted" style="margin-top:-4px">Type a short description first, then upload. You can do this several times with different descriptions. Tap a thumbnail to remove that image.</p>
+<div class="row">
+<label class="btn" style="position:relative;overflow:hidden">Upload images<input id="file" type="file" accept="image/*" multiple style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:16px"></label>
+<button class="alt" id="sample">Use sample shapes</button>
+<select id="libsel"><option value="all">Library: all themes</option><option value="sunset">Sunsets</option><option value="flower">Flowers</option><option value="face">Faces</option><option value="stars">Night skies</option><option value="landscape">Landscapes</option><option value="stripes">Stripes</option></select>
+<button class="alt" id="addlib">Add library images</button>
+<button class="alt" id="clear">Clear</button>
+</div>
+<p class="muted" id="count">0 images loaded. Use at least 10, similar in style (for example all faces, all logos or all flowers).</p>
+<div class="thumbs" id="thumbs"></div>
+</div>
+
+<div class="card">
+<h2><span class="step">2</span>Train the model</h2>
+<div class="row">
+<label><input type="checkbox" id="keep" checked> Keep what it learned before</label>
+<label><input type="checkbox" id="aug"> Extra variations (slower)</label>
+<label>Image detail: <select id="res"><option value="16">16 px (fastest)</option><option value="24">24 px</option><option value="32" selected>32 px</option><option value="48">48 px (slowest, sharpest)</option></select></label>
+<label>Training rounds: <input id="epochs" type="range" min="50" max="600" step="50" value="150"> <b id="epv">150</b></label>
+<button id="train">Train</button>
+<button class="alt" id="stop" disabled>Stop</button>
+<button class="alt" id="reset">Start fresh</button>
+</div>
+<div class="bar"><i id="prog"></i></div>
+<p class="muted stat" id="status">Not trained yet.</p>
+</div>
+
+<div class="card">
+<h2><span class="step">3</span>Generate new images</h2>
+<input id="prompt" type="text" placeholder="Text prompt, e.g. red flower (optional)">
+<div class="row" id="chips" style="margin-bottom:8px"></div>
+<p class="muted" id="pnote" style="margin-top:-4px"></p>
+<div class="row">
+<label><input type="checkbox" id="pix" checked> Pixel look</label>
+<label>How many: <select id="ncount"><option>4</option><option selected>8</option><option>12</option></select></label>
+<label>Creativity: <input id="creat" type="range" min="0" max="2" step="0.1" value="0.8"> <b id="crv">0.8</b></label>
+<button id="gen" disabled>Generate</button>
+<button class="alt" id="isave">Save</button>
+<button class="alt" id="iload">Load saved</button>
+<button class="alt" id="cmp">What it learned</button>
+<button class="alt" id="sheet">Save as picture</button>
+<button class="alt" id="mix">Mix two</button>
+<label class="btn alt" style="position:relative;overflow:hidden">Import from Colab<input id="iimp" type="file" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px"></label>
+</div>
+<div class="out" id="out"></div>
+<div class="out" id="cmpout"></div>
+<div id="sheetout"></div>
+<p class="muted">Tip: this is a tiny model (32×32 pixels), so results are small and blurry. More similar images and more rounds give better results.</p>
+</div>
+</div>
+
+<div id="txtTab" style="display:none">
+<div class="card">
+<h2><span class="step">1</span>Give it text to learn from</h2>
+<textarea id="corpus" rows="7" placeholder="Paste a few paragraphs here. The more text, the better."></textarea>
+<div class="row">
+<label class="btn alt" style="position:relative;overflow:hidden">Upload .txt file<input id="tfile" type="file" accept=".txt,text/plain" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px"></label>
+<button class="alt" id="tsample">Use sample text</button>
+<select id="tpre"><option value="stories">English stories</option><option value="chat">English conversations</option><option value="animals">Animal sentences</option><option value="maths">Maths in words</option><option value="es">Spanish sentences</option><option value="fr">French sentences</option><option value="de">German sentences</option><option value="mix">English, Spanish, French, German mixed</option></select>
+<button class="alt" id="tadd">Add preset text</button>
+</div>
+<p class="muted" id="tcount">0 characters. Aim for at least 2,000.</p>
+</div>
+<div class="card">
+<h2><span class="step">2</span>Train the text model</h2>
+<div class="row">
+<label><input type="checkbox" id="tkeep" checked> Keep what it learned before</label>
+<label>Training rounds: <input id="tep" type="range" min="10" max="100" step="10" value="40"> <b id="tepv">40</b></label>
+<button id="ttrain">Train</button>
+<button class="alt" id="tstop" disabled>Stop</button>
+</div>
+<div class="bar"><i id="tprog"></i></div>
+<p class="muted stat" id="tstatus">Not trained yet.</p>
+</div>
+<div class="card">
+<h2><span class="step">3</span>Write with it</h2>
+<input id="tprompt" type="text" placeholder="Text prompt: start a sentence, e.g. The robot">
+<div class="row" id="tchips" style="margin-bottom:8px"></div>
+<div class="row">
+<label>Creativity: <input id="tcr" type="range" min="0.2" max="1.5" step="0.1" value="0.8"> <b id="tcrv">0.8</b></label>
+<label>Length: <input id="tlen" type="range" min="100" max="1000" step="100" value="300"> <b id="tlenv">300</b></label>
+<button id="tgo" disabled>Write</button>
+<button class="alt" id="tsave">Save</button>
+<button class="alt" id="tload">Load saved</button>
+<button class="alt" id="tcopy">Copy</button>
+<label class="btn alt" style="position:relative;overflow:hidden">Import from Colab<input id="timp" type="file" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px"></label>
+</div>
+<div class="tout" id="tout"></div>
+<p class="muted">This is a tiny model that learns patterns in your text, so it writes in your text’s style but won’t make much sense. It works best with lots of text.</p>
+</div>
+</div>
+</main>
+
+<script>
+let S = 32, D = S*S*3; const LAT = 16, MAXS = 64; let srcs = [];
+function toArr(src){
+  const cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const g = cv.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(src,0,0,S,S);
+  const d = g.getImageData(0,0,S,S).data, arr = new Float32Array(S*S*3);
+  for(let i=0,j=0;i<d.length;i+=4){arr[j++]=d[i]/255;arr[j++]=d[i+1]/255;arr[j++]=d[i+2]/255;}
+  return arr;
+}
+let imgs = [];            // Float32Array(D) each
+let labels = []; let cache = null;
+let encoder = null, decoder = null, auto = null, training = false;
+const $ = id => document.getElementById(id);
+
+function updateCount(){
+  $('count').textContent = imgs.length + (imgs.length===1?' image':' images') + ' loaded. Use at least 10, similar in style (for example all faces, all logos or all flowers).';
+}
+function addCanvas(c){
+  const ctx = c.getContext('2d');
+  const d = ctx.getImageData(0,0,c.width,c.height).data; srcs.push(c);
+  const arr = new Float32Array(0);
+  for(let i=0,j=0;i<d.length;i+=4){arr[j++]=d[i]/255;arr[j++]=d[i+1]/255;arr[j++]=d[i+2]/255;}
+  imgs.push(arr); labels.push(($('lbl').value||'').trim().toLowerCase());
+  const t = document.createElement('canvas'); t.width=t.height=32;
+  t.getContext('2d').drawImage(c,0,0,32,32);
+  t.title = labels[labels.length-1] + ' (tap to remove)'; t.style.cursor = 'pointer';
+  t.onclick = () => { const i = Array.from($('thumbs').children).indexOf(t); if(i<0) return; srcs.splice(i,1); imgs.splice(i,1); labels.splice(i,1); t.remove(); updateCount(); };
+  $('thumbs').appendChild(t);
+}
+async function loadSmall(f){
+  if(window.createImageBitmap){
+    try{
+      const bm = await createImageBitmap(f,{resizeWidth:128,resizeQuality:'medium'});
+      return {src:bm,w:bm.width,h:bm.height,close:()=>{ try{bm.close();}catch(e){} }};
+    }catch(e){}
+  }
+  const u = URL.createObjectURL(f);
+  const i = await new Promise((res,rej)=>{ const x=new Image(); x.onload=()=>res(x); x.onerror=()=>rej(new Error('load')); x.src=u; });
+  URL.revokeObjectURL(u);
+  return {src:i,w:i.naturalWidth,h:i.naturalHeight,close:()=>{ i.src=''; }};
+}
+$('file').addEventListener('change', async e => {
+  const files = Array.from(e.target.files || []).slice(0,80);
+  let failed = 0;
+  $('count').textContent = 'Loading ' + files.length + ' image(s)...';
+  for(const f of files){
+    try{
+      const im = await loadSmall(f);
+      const w = im.w, h = im.h, m = Math.min(w,h);
+      const c = document.createElement('canvas'); c.width=c.height=S;
+      c.width=c.height=MAXS; c.getContext('2d').drawImage(im.src,(w-m)/2,(h-m)/2,m,m,0,0,MAXS,MAXS);
+      im.close();
+      addCanvas(c);
+      await new Promise(r=>setTimeout(r,30));
+    }catch(err){ failed++; }
+  }
+  updateCount();
+  if(failed) $('count').textContent += ' (' + failed + ' could not be read; try JPG or PNG.)';
+  e.target.value='';
+});
+$('sample').onclick = () => {
+  for(let n=0;n<60;n++){
+    const c = document.createElement('canvas'); c.width=c.height=S;
+    c.width = c.height = 32; const x = c.getContext('2d');
+    const h = Math.random()*360;
+    x.fillStyle = `hsl(${h},60%,${15+Math.random()*15}%)`; x.fillRect(0,0,32,32);
+    x.fillStyle = `hsl(${(h+150+Math.random()*60)%360},80%,60%)`;
+    x.beginPath();
+    const r = 6+Math.random()*7, cx = 11+Math.random()*10, cy = 11+Math.random()*10;
+    const isC = Math.random()<.5;
+    if(isC) x.arc(cx,cy,r,0,7); else x.rect(cx-r,cy-r,r*2,r*2);
+    x.fill();
+    const keep = $('lbl').value; $('lbl').value = isC ? 'circle' : 'square';
+    addCanvas(c);
+    $('lbl').value = keep;
+  }
+  updateCount();
+};
+$('clear').onclick = () => { imgs=[]; srcs=[]; labels=[]; $('thumbs').innerHTML=''; updateCount(); };
+$('epochs').oninput = e => $('epv').textContent = e.target.value;
+$('creat').oninput = e => $('crv').textContent = e.target.value;
+
+function build(){
+  try{ tf.env().set('WEBGL_DELETE_TEXTURE_THRESHOLD',0); }catch(e){}
+  const inp = tf.input({shape:[D]});
+  let h = tf.layers.dense({units:384,activation:'relu'}).apply(inp);
+  h = tf.layers.dense({units:96,activation:'relu'}).apply(h);
+  const z = tf.layers.dense({units:LAT}).apply(h);
+  encoder = tf.model({inputs:inp,outputs:z});
+  const zin = tf.input({shape:[LAT]});
+  let g = tf.layers.dense({units:96,activation:'relu'}).apply(zin);
+  g = tf.layers.dense({units:384,activation:'relu'}).apply(g);
+  const o = tf.layers.dense({units:D,activation:'sigmoid'}).apply(g);
+  decoder = tf.model({inputs:zin,outputs:o});
+  auto = tf.model({inputs:inp,outputs:decoder.apply(encoder.apply(inp))});
+  auto.compile({optimizer:tf.train.adam(0.002),loss:'meanSquaredError'});
+}
+function flip(a){
+  const b = new Float32Array(D);
+  for(let y=0;y<S;y++)for(let x=0;x<S;x++)for(let c=0;c<3;c++) b[(y*S+x)*3+c]=a[(y*S+(S-1-x))*3+c];
+  return b;
+}
+$('train').onclick = async () => {
+  if(training) return;
+  if(typeof tf === 'undefined'){ $('status').textContent = 'The AI library could not load. Connect to the internet once, or put tf.min.js in the same folder as this file.'; return; }
+  if(imgs.length<4){ $('status').textContent='Add at least 4 images first (10 or more is better).'; return; }
+  training = true; $('train').disabled = true; $('gen').disabled = true; $('stop').disabled = false; cache = null;
+  const cont = $('keep').checked && auto && S === +$('res').value;
+  if(!cont){ if(auto){ auto.dispose(); encoder=decoder=auto=null; } S = +$('res').value; D = S*S*3; }
+  imgs = srcs.map(c => toArr(c));
+  if(!cont) build();
+  let all = [...imgs, ...imgs.map(flip)];
+  if($('aug').checked) all = all.concat(imgs.map(jitter), imgs.map(a => jitter(flip(a))));
+  const flat = new Float32Array(all.length*D);
+  all.forEach((a,i)=>flat.set(a,i*D));
+  const X = tf.tensor2d(flat,[all.length,D]);
+  const E = +$('epochs').value;
+  const t0 = performance.now();
+  try{
+    await auto.fit(X,X,{epochs:E,batchSize:32,shuffle:true,callbacks:{
+      onEpochEnd: async (ep,logs) => {
+        $('prog').style.width = ((ep+1)/E*100)+'%';
+        const el = (performance.now()-t0)/1000, left = Math.max(0, el/(ep+1)*(E-ep-1));
+        $('status').textContent = `Round ${ep+1} of ${E} · error: ${logs.loss.toFixed(4)} · about ${Math.ceil(left)}s left · ${tf.getBackend()}`;
+        if(ep%5===0) await tf.nextFrame();
+      }}});
+    $('status').textContent = 'Training finished. Press Generate.';
+    $('gen').disabled = false;
+    await generate();
+  }catch(err){ $('status').textContent = 'Something went wrong: '+err.message; }
+  X.dispose(); training = false; $('train').disabled = false; $('stop').disabled = true;
+};
+
+async function buildCache(){
+  const lat = tf.tidy(()=>{
+    const flat = new Float32Array(imgs.length*D);
+    imgs.forEach((a,i)=>flat.set(a,i*D));
+    return encoder.predict(tf.tensor2d(flat,[imgs.length,D]));
+  });
+  cache = {L: await lat.array(), labels: [...labels]};
+  lat.dispose();
+}
+async function generate(base){
+  if(!decoder) return;
+  const creat = +$('creat').value;
+  const out = $('out'); out.innerHTML='';
+  if(!cache) await buildCache();
+  const L = cache.L, labels = cache.labels; updateChips(labels);
+  const std = Array.from({length:LAT},(_,k)=>{
+    const m = L.reduce((s,r)=>s+r[k],0)/L.length;
+    return Math.sqrt(L.reduce((s,r)=>s+(r[k]-m)**2,0)/L.length)+1e-3;
+  });
+  const N = +$('ncount').value, rows = [];
+  const words = ($('prompt').value||'').toLowerCase().split(/\W+/).filter(w=>w.length>2);
+  let pool = L.map((_,i)=>i).filter(i=>words.some(w=>(labels[i]||'').includes(w)));
+  $('pnote').textContent = !words.length ? '' : pool.length ? 'Using ' + pool.length + ' image(s) whose description matches your prompt.' : 'No image descriptions matched, so it used all of them.';
+  if(!pool.length) pool = L.map((_,i)=>i);
+  for(let n=0;n<N;n++){
+    const a = base || L[pool[Math.floor(Math.random()*pool.length)]], b = base || L[pool[Math.floor(Math.random()*pool.length)]];
+    const t = Math.random();
+    rows.push(a.map((v,k)=>v*(1-t)+b[k]*t + (Math.random()+Math.random()+Math.random()-1.5)*std[k]*creat));
+  }
+  const img = tf.tidy(()=>decoder.predict(tf.tensor2d(rows)).reshape([N,S,S,3]));
+  for(let n=0;n<N;n++){
+    const c = document.createElement('canvas');
+    const px = img.slice([n,0,0,0],[1,S,S,3]).squeeze();
+    await tf.browser.toPixels(px,c);
+    px.dispose();
+    c.title = 'Tap for more like this'; c.style.cursor = 'pointer';
+    c.onclick = () => tapImg(rows[n], c);
+    out.appendChild(c);
+  }
+  img.dispose();
+}
+$('gen').onclick = () => { mixMode = false; mixPick = []; generate(); };
+$('stop').onclick = () => { if(auto) auto.stopTraining = true; };
+async function restoreImgs(){
+  try{
+    const raw = localStorage.getItem('img-data'); if(!raw) return;
+    const d = JSON.parse(raw), keepLbl = $('lbl').value;
+    srcs = []; imgs = []; labels = []; $('thumbs').innerHTML = '';
+    for(let i=0;i<d.imgs.length;i++){
+      const im = await new Promise((res,rej)=>{ const x = new Image(); x.onload = () => res(x); x.onerror = rej; x.src = d.imgs[i]; });
+      const c = document.createElement('canvas'); c.width = c.height = MAXS;
+      c.getContext('2d').drawImage(im,0,0,MAXS,MAXS);
+      $('lbl').value = d.labels[i] || ''; addCanvas(c);
+    }
+    $('lbl').value = keepLbl; updateCount();
+  }catch(e){}
+}
+$('isave').onclick = async () => {
+  try{
+    if(!decoder){ $('pnote').textContent = 'Train a model first.'; return; }
+    if(!cache) await buildCache();
+    await encoder.save('indexeddb://img-encoder');
+    await decoder.save('indexeddb://img-decoder');
+    localStorage.setItem('img-cache', JSON.stringify({L: cache.L.map(r=>r.map(v=>+v.toFixed(3))), labels: cache.labels}));
+    let note = 'Saved in this browser, including your images.';
+    try{ localStorage.setItem('img-data', JSON.stringify({labels: [...labels], imgs: srcs.map(c => c.toDataURL('image/jpeg',0.85))})); }catch(e){ note = 'Saved the model, but there was no room for your images.'; }
+    $('pnote').textContent = note;
+  }catch(e){ $('pnote').textContent = 'Could not save: ' + e.message; }
+};
+$('iload').onclick = async () => {
+  try{
+    const m = await tf.loadLayersModel('indexeddb://img-decoder');
+    const enc = await tf.loadLayersModel('indexeddb://img-encoder');
+    const c = JSON.parse(localStorage.getItem('img-cache'));
+    if(!c) throw new Error('none');
+    if(auto) auto.dispose();
+    cache = c; decoder = m; encoder = enc; S = Math.round(Math.sqrt(m.outputs[0].shape[1]/3)); D = S*S*3; $('gen').disabled = false;
+    const inp = tf.input({shape:[D]});
+    auto = tf.model({inputs:inp,outputs:decoder.apply(encoder.apply(inp))});
+    auto.compile({optimizer:tf.train.adam(0.002),loss:'meanSquaredError'});
+    if([16,24,32,48].includes(S)) $('res').value = S;
+    await restoreImgs();
+    await generate();
+    $('pnote').textContent = 'Loaded your saved model.';
+  }catch(e){ $('pnote').textContent = 'Nothing saved yet, or it could not be loaded.'; }
+};
+
+/* ---------- Tabs ---------- */
+function showTab(t){
+  $('imgTab').style.display = t==='i' ? '' : 'none';
+  $('txtTab').style.display = t==='t' ? '' : 'none';
+  $('tabI').classList.toggle('on', t==='i');
+  $('tabT').classList.toggle('on', t==='t');
+}
+$('tabI').onclick = () => showTab('i');
+$('tabT').onclick = () => showTab('t');
+
+/* ---------- Text AI (character model) ---------- */
+const TW = 16;
+let tm = null, tvocab = [], tmap = {}, tTraining = false;
+const SAMPLE = 'The little robot woke up in the garden. It looked at the flowers and the bees. The sun was warm and the grass was soft. The robot wanted to learn about the world, so it asked the bees where they were going. The bees said they were going to find the best flowers. The robot followed them across the garden, past the old wooden fence and the tall green trees. At the end of the path there was a small pond. A frog sat on a leaf and watched the water. The robot sat next to the frog and the two of them watched the sky turn orange. When the stars came out, the robot smiled. It had learned that the world is big, and that the best way to learn is to go and look. ';
+function updateT(){ $('tcount').textContent = $('corpus').value.length.toLocaleString() + ' characters. Aim for at least 2,000.'; }
+$('corpus').oninput = updateT;
+$('tsample').onclick = () => { $('corpus').value = SAMPLE.repeat(3); updateT(); };
+$('tfile').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0];
+  if(f){ try{ $('corpus').value = (await f.text()).slice(0,200000); }catch(err){ $('tstatus').textContent = 'Could not read that file.'; } updateT(); }
+  e.target.value = '';
+});
+$('tep').oninput = e => $('tepv').textContent = e.target.value;
+$('tcr').oninput = e => $('tcrv').textContent = e.target.value;
+
+$('ttrain').onclick = async () => {
+  if(tTraining) return;
+  if(typeof tf === 'undefined'){ $('tstatus').textContent = 'The AI library could not load. Connect to the internet once, or put tf.min.js in the same folder as this file.'; return; }
+  const txt = $('corpus').value;
+  if(txt.length < 300){ $('tstatus').textContent = 'Add at least 300 characters of text first (2,000 or more is better).'; return; }
+  tTraining = true; $('ttrain').disabled = true; $('tgo').disabled = true; $('tstop').disabled = false;
+  const tcont = $('tkeep').checked && !!tm;
+  let chars = Array.from(txt);
+  if(tcont) chars = chars.filter(c => tmap[c] !== undefined);
+  if(chars.length < 100){ $('tstatus').textContent = 'Not enough usable text. When continuing, it can only use characters the model already knows.'; tTraining = false; $('ttrain').disabled = false; $('tstop').disabled = true; $('tgo').disabled = !tm; return; }
+  if(!tcont){ if(tm){ tm.dispose(); tm = null; } tvocab = [...new Set(chars)].sort(); tmap = {}; tvocab.forEach((c,i)=>tmap[c]=i); }
+  const V = tvocab.length, ids = chars.map(c=>tmap[c]);
+  const n = ids.length - TW, step = Math.max(1, Math.floor(n/20000)), xs = [], ys = [];
+  for(let i=0;i<n;i+=step){ xs.push(ids.slice(i,i+TW)); ys.push(ids[i+TW]); }
+  const X = tf.tensor2d(xs,[xs.length,TW]);
+  const Y = tf.oneHot(tf.tensor1d(ys,'int32'),V).toFloat();
+  if(!tcont){ tm = tf.sequential();
+  tm.add(tf.layers.embedding({inputDim:V,outputDim:16,inputLength:TW}));
+  tm.add(tf.layers.flatten());
+  tm.add(tf.layers.dense({units:256,activation:'relu'}));
+  tm.add(tf.layers.dense({units:V,activation:'softmax'})); }
+  tm.compile({optimizer:tf.train.adam(0.004),loss:'categoricalCrossentropy'});
+  const E = +$('tep').value, t0 = performance.now();
+  try{
+    await tm.fit(X,Y,{epochs:E,batchSize:128,shuffle:true,callbacks:{
+      onEpochEnd: async (ep,logs) => {
+        const el = (performance.now()-t0)/1000, left = Math.max(0, el/(ep+1)*(E-ep-1));
+        $('tprog').style.width = ((ep+1)/E*100)+'%';
+        $('tstatus').textContent = `Round ${ep+1} of ${E} · error: ${logs.loss.toFixed(3)} · about ${Math.ceil(left)}s left`;
+        if(ep%3===0) await tf.nextFrame();
+      }}});
+    $('tstatus').textContent = 'Training finished. Type a prompt and press Write.';
+    $('tgo').disabled = false;
+    await tgen();
+  }catch(err){ $('tstatus').textContent = 'Something went wrong: ' + err.message; }
+  X.dispose(); Y.dispose(); tTraining = false; $('ttrain').disabled = false; $('tstop').disabled = true;
+};
+
+async function tgen(){
+  if(!tm) return;
+  const T = +$('tcr').value, pad = tmap[' '] !== undefined ? tmap[' '] : 0;
+  const start = $('tprompt').value;
+  const ids = Array.from(start).filter(c=>tmap[c]!==undefined).map(c=>tmap[c]);
+  let text = start; const out = $('tout'); out.textContent = text;
+  const LEN = +$('tlen').value;
+  for(let k=0;k<LEN;k++){
+    const win = ids.slice(-TW); while(win.length<TW) win.unshift(pad);
+    const p = tf.tidy(()=>tm.predict(tf.tensor2d([win],[1,TW])));
+    const arr = await p.data(); p.dispose();
+    let s = 0;
+    const q = Array.from(arr, v => { const x = Math.pow(Math.max(v,1e-9), 1/Math.max(T,0.05)); s += x; return x; });
+    let r = Math.random()*s, j = 0;
+    for(; j<q.length-1; j++){ r -= q[j]; if(r<=0) break; }
+    ids.push(j); text += tvocab[j];
+    if(k%8===0){ out.textContent = text; await tf.nextFrame(); }
+  }
+  out.textContent = text;
+}
+$('tgo').onclick = tgen;
+
+/* ---------- More extras: variations, mixing, chips, reset ---------- */
+function jitter(a){
+  const b = 0.8+Math.random()*0.4, g = [0,1,2].map(() => 0.92+Math.random()*0.16), o = new Float32Array(a.length);
+  for(let i=0;i<a.length;i++) o[i] = Math.min(1, a[i]*b*g[i%3]);
+  return o;
+}
+let mixMode = false, mixPick = [];
+async function showRows(rows){
+  const out = $('out'); out.innerHTML = '';
+  const N = rows.length;
+  const img = tf.tidy(() => decoder.predict(tf.tensor2d(rows)).reshape([N,S,S,3]));
+  for(let n=0;n<N;n++){
+    const c = document.createElement('canvas');
+    const px = img.slice([n,0,0,0],[1,S,S,3]).squeeze();
+    await tf.browser.toPixels(px,c); px.dispose();
+    c.title = 'Tap for more like this'; c.style.cursor = 'pointer';
+    c.onclick = () => tapImg(rows[n], c);
+    out.appendChild(c);
+  }
+  img.dispose();
+}
+function tapImg(lat, c){
+  if(mixMode){
+    mixPick.push(lat); c.style.outline = '3px solid var(--accent)';
+    if(mixPick.length === 2){
+      const a = mixPick[0], b = mixPick[1]; mixMode = false; mixPick = [];
+      const r = [];
+      for(let i=0;i<8;i++){ const t = i/7; r.push(a.map((v,k) => v*(1-t) + b[k]*t)); }
+      $('pnote').textContent = 'A blend from the first image you tapped to the second.';
+      showRows(r);
+    }
+  } else generate(lat);
+}
+$('mix').onclick = () => {
+  if(!decoder || !$('out').children.length){ $('pnote').textContent = 'Generate some images first, then tap Mix two.'; return; }
+  mixMode = true; mixPick = [];
+  $('pnote').textContent = 'Tap two images to blend them.';
+};
+function updateChips(lb){
+  const f = {};
+  lb.forEach(l => (l||'').split(/\W+/).filter(w => w.length > 2).forEach(w => f[w] = (f[w]||0) + 1));
+  const top = Object.entries(f).sort((a,b) => b[1]-a[1]).slice(0,8).map(e => e[0]);
+  const box = $('chips'); box.innerHTML = '';
+  top.forEach(w => {
+    const b = document.createElement('button'); b.className = 'alt'; b.textContent = w; b.style.padding = '4px 10px';
+    b.onclick = () => { $('prompt').value = w; generate(); };
+    box.appendChild(b);
+  });
+}
+['The','Once upon a time','I think that','When the'].forEach(w => {
+  const b = document.createElement('button'); b.className = 'alt'; b.textContent = w; b.style.padding = '4px 10px';
+  b.onclick = () => { $('tprompt').value = w; if(tm) tgen(); };
+  $('tchips').appendChild(b);
+});
+$('reset').onclick = () => {
+  if(training) return;
+  try{ if(auto) auto.dispose(); }catch(e){}
+  auto = encoder = decoder = null; cache = null;
+  $('gen').disabled = true; $('prog').style.width = '0';
+  $('status').textContent = 'Model cleared. Your images are still loaded. Press Train to start fresh.';
+};
+
+/* ---------- Extras: compare, save as picture, copy ---------- */
+$('cmp').onclick = async () => {
+  if(!encoder || !decoder || !srcs.length){ $('pnote').textContent = 'Train a model first.'; return; }
+  try{
+    const box = $('cmpout'); box.innerHTML = '';
+    const pick = []; for(let i=0;i<4;i++) pick.push(Math.floor(Math.random()*srcs.length));
+    const flat = new Float32Array(4*D);
+    pick.forEach((p,i) => flat.set(toArr(srcs[p]), i*D));
+    const rec = tf.tidy(() => decoder.predict(encoder.predict(tf.tensor2d(flat,[4,D]))).reshape([4,S,S,3]));
+    pick.forEach(p => { const o = document.createElement('canvas'); o.width = o.height = S; o.getContext('2d').drawImage(srcs[p],0,0,S,S); box.appendChild(o); });
+    for(let i=0;i<4;i++){
+      const c = document.createElement('canvas');
+      const px = rec.slice([i,0,0,0],[1,S,S,3]).squeeze();
+      await tf.browser.toPixels(px,c); px.dispose(); box.appendChild(c);
+    }
+    rec.dispose();
+    $('pnote').textContent = 'Top row: your originals. Bottom row: what the model redraws from memory.';
+  }catch(e){ $('pnote').textContent = 'Could not compare: ' + e.message; }
+};
+$('sheet').onclick = () => {
+  const cs = Array.from($('out').children).filter(e => e.tagName === 'CANVAS');
+  if(!cs.length){ $('pnote').textContent = 'Generate some images first.'; return; }
+  const cell = 160, cols = 4, rws = Math.ceil(cs.length/cols);
+  const sh = document.createElement('canvas'); sh.width = cols*cell; sh.height = rws*cell;
+  const g = sh.getContext('2d'); g.imageSmoothingEnabled = !$('pix').checked;
+  cs.forEach((c,i) => g.drawImage(c,(i%cols)*cell,Math.floor(i/cols)*cell,cell,cell));
+  $('sheetout').innerHTML = '<p class="muted">Press and hold the picture, then choose Save to Photos (on a computer, right-click and save).</p><img alt="Generated images" style="max-width:100%;border-radius:10px;border:1px solid var(--line)" src="' + sh.toDataURL('image/png') + '">';
+};
+$('tcopy').onclick = async () => {
+  try{ await navigator.clipboard.writeText($('tout').textContent); $('tstatus').textContent = 'Copied.'; }
+  catch(e){ $('tstatus').textContent = 'Could not copy. Press and hold the text to select it.'; }
+};
+
+/* ---------- Pixel look + built-in image library ---------- */
+$('out').style.imageRendering = 'pixelated';
+$('pix').onchange = e => { $('out').style.imageRendering = e.target.checked ? 'pixelated' : 'auto'; };
+const R = Math.random;
+const LIB = {
+  sunset(x,s){ const h = R()*40, g = x.createLinearGradient(0,0,0,s); g.addColorStop(0,`hsl(${250+R()*40},60%,25%)`); g.addColorStop(.6,`hsl(${h+10},90%,60%)`); g.addColorStop(1,`hsl(${h},90%,70%)`); x.fillStyle = g; x.fillRect(0,0,s,s); x.fillStyle = `hsl(${h+30},100%,70%)`; x.beginPath(); x.arc(s*(.2+R()*.6),s*(.5+R()*.2),s*.12,0,7); x.fill(); x.fillStyle = '#111'; x.fillRect(0,s*.78,s,s*.22); },
+  flower(x,s){ x.fillStyle = `hsl(${90+R()*60},45%,${30+R()*20}%)`; x.fillRect(0,0,s,s); const n = 5+Math.floor(R()*4), r = s*.22; x.fillStyle = `hsl(${R()*360},80%,60%)`; for(let i=0;i<n;i++){ const a = i/n*6.283; x.beginPath(); x.arc(s/2+Math.cos(a)*r*1.2,s/2+Math.sin(a)*r*1.2,r*.8,0,7); x.fill(); } x.fillStyle = '#fc3'; x.beginPath(); x.arc(s/2,s/2,r*.7,0,7); x.fill(); },
+  face(x,s){ x.fillStyle = `hsl(${R()*360},40%,80%)`; x.fillRect(0,0,s,s); x.fillStyle = `hsl(${30+R()*20},70%,${55+R()*25}%)`; x.beginPath(); x.arc(s/2,s/2,s*.38,0,7); x.fill(); x.fillStyle = '#222'; [.36,.64].forEach(p => { x.beginPath(); x.arc(s*p,s*.42,s*.05,0,7); x.fill(); }); x.lineWidth = s*.04; x.strokeStyle = '#222'; x.beginPath(); x.arc(s/2,s*(.5+R()*.05),s*.17,.2,2.94); x.stroke(); },
+  stars(x,s){ x.fillStyle = `hsl(${220+R()*50},60%,${8+R()*10}%)`; x.fillRect(0,0,s,s); x.fillStyle = '#fff'; for(let i=0;i<25;i++) x.fillRect(R()*s,R()*s,1+R()*s*.03,1+R()*s*.03); x.fillStyle = '#ffe9a8'; x.beginPath(); x.arc(s*(.2+R()*.6),s*(.2+R()*.3),s*.1,0,7); x.fill(); },
+  landscape(x,s){ x.fillStyle = `hsl(${190+R()*30},70%,${65+R()*15}%)`; x.fillRect(0,0,s,s); x.fillStyle = '#fd5'; x.beginPath(); x.arc(s*R(),s*.2,s*.1,0,7); x.fill(); for(let k=0;k<2;k++){ x.fillStyle = `hsl(${100+R()*40},50%,${25+k*15}%)`; x.beginPath(); x.ellipse(s*R(),s*(.85+k*.1),s*(.6+R()*.3),s*(.3+R()*.15),0,0,7); x.fill(); } },
+  stripes(x,s){ const h = R()*360, n = 3+Math.floor(R()*6), v = R()<.5; for(let i=0;i<n;i++){ x.fillStyle = `hsl(${(h+i*(20+R()*10))%360},70%,${40+(i%2)*25}%)`; if(v) x.fillRect(i*s/n,0,s/n+1,s); else x.fillRect(0,i*s/n,s,s/n+1); } }
+};
+const LIBLBL = {sunset:'sunset sky orange', flower:'flower petals', face:'face smiley person', stars:'stars night sky moon', landscape:'landscape hills day', stripes:'stripes pattern'};
+/* ---------- More image themes ---------- */
+Object.assign(LIB, {
+  ocean(x,s){ x.fillStyle = `hsl(${200+R()*20},60%,${70+R()*15}%)`; x.fillRect(0,0,s,s*.5); x.fillStyle = `hsl(${195+R()*25},70%,${35+R()*15}%)`; x.fillRect(0,s*.5,s,s*.5); x.fillStyle = '#fe9'; x.beginPath(); x.arc(s*(.2+R()*.6),s*.25,s*.08,0,7); x.fill(); x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = s*.02; for(let i=0;i<4;i++){ x.beginPath(); for(let k=0;k<=s;k+=3) x.lineTo(k,s*(.58+i*.1)+Math.sin(k/5+i*2)*s*.02); x.stroke(); } },
+  mountain(x,s){ x.fillStyle = `hsl(${200+R()*30},60%,${70+R()*15}%)`; x.fillRect(0,0,s,s); for(let k=0;k<2;k++){ const cx = s*(.25+R()*.5), w = s*(.35+R()*.2), h = s*(.35+R()*.25), base = s*.9; x.fillStyle = `hsl(${210+k*20},15%,${35+k*15}%)`; x.beginPath(); x.moveTo(cx-w,base); x.lineTo(cx,base-h); x.lineTo(cx+w,base); x.fill(); x.fillStyle = '#fff'; x.beginPath(); x.moveTo(cx-w*.25,base-h*.75); x.lineTo(cx,base-h); x.lineTo(cx+w*.25,base-h*.75); x.fill(); } },
+  house(x,s){ x.fillStyle = `hsl(${90+R()*40},50%,${60+R()*15}%)`; x.fillRect(0,0,s,s); x.fillStyle = `hsl(${R()*360},50%,70%)`; x.fillRect(s*.25,s*.45,s*.5,s*.4); x.fillStyle = `hsl(${R()*30},60%,40%)`; x.beginPath(); x.moveTo(s*.2,s*.45); x.lineTo(s*.5,s*.2); x.lineTo(s*.8,s*.45); x.fill(); x.fillStyle = '#543'; x.fillRect(s*.45,s*.6,s*.1,s*.25); x.fillStyle = '#bdf'; x.fillRect(s*.3,s*.52,s*.1,s*.1); x.fillRect(s*.6,s*.52,s*.1,s*.1); },
+  tree(x,s){ x.fillStyle = `hsl(${190+R()*30},60%,${75+R()*10}%)`; x.fillRect(0,0,s,s); x.fillStyle = '#6b4'; x.fillRect(0,s*.85,s,s*.15); x.fillStyle = '#753'; x.fillRect(s*.46,s*.5,s*.08,s*.38); x.fillStyle = `hsl(${100+R()*40},55%,${30+R()*15}%)`; for(let i=0;i<3;i++){ x.beginPath(); x.arc(s*(.4+i*.1),s*(.38+(i%2)*.08),s*.16,0,7); x.fill(); } },
+  planet(x,s){ x.fillStyle = '#0b0b25'; x.fillRect(0,0,s,s); x.fillStyle = '#fff'; for(let i=0;i<20;i++) x.fillRect(R()*s,R()*s,1,1); const h = R()*360; x.fillStyle = `hsl(${h},70%,55%)`; x.beginPath(); x.arc(s/2,s/2,s*.22,0,7); x.fill(); x.strokeStyle = `hsl(${h+40},60%,75%)`; x.lineWidth = s*.04; x.beginPath(); x.ellipse(s/2,s/2,s*.36,s*.1,-.4,0,7); x.stroke(); },
+  rainbow(x,s){ x.fillStyle = `hsl(${200+R()*20},70%,${75+R()*10}%)`; x.fillRect(0,0,s,s); ['#e33','#f93','#fd3','#4b4','#39f','#84c'].forEach((c,i) => { x.strokeStyle = c; x.lineWidth = s*.06; x.beginPath(); x.arc(s/2,s*.85,s*(.4-i*.055),Math.PI,0); x.stroke(); }); },
+  fish(x,s){ x.fillStyle = `hsl(${195+R()*25},70%,${40+R()*15}%)`; x.fillRect(0,0,s,s); const cx = s*(.4+R()*.2), cy = s*(.4+R()*.2); x.fillStyle = `hsl(${R()*60},90%,60%)`; x.beginPath(); x.ellipse(cx,cy,s*.22,s*.13,0,0,7); x.fill(); x.beginPath(); x.moveTo(cx+s*.18,cy); x.lineTo(cx+s*.36,cy-s*.12); x.lineTo(cx+s*.36,cy+s*.12); x.fill(); x.fillStyle = '#fff'; x.beginPath(); x.arc(cx-s*.1,cy-s*.03,s*.035,0,7); x.fill(); x.fillStyle = '#111'; x.beginPath(); x.arc(cx-s*.1,cy-s*.03,s*.015,0,7); x.fill(); },
+  dots(x,s){ x.fillStyle = `hsl(${R()*360},50%,${20+R()*20}%)`; x.fillRect(0,0,s,s); const n = 3+Math.floor(R()*4), h = R()*360; for(let i=0;i<n;i++) for(let j=0;j<n;j++){ x.fillStyle = `hsl(${(h+(i+j)*15)%360},80%,65%)`; x.beginPath(); x.arc((i+.5)*s/n,(j+.5)*s/n,s/n*.35,0,7); x.fill(); } }
+});
+Object.assign(LIBLBL, {ocean:'ocean sea water waves', mountain:'mountain snow peak', house:'house home building', tree:'tree green nature', planet:'planet space ring', rainbow:'rainbow colorful sky', fish:'fish sea animal', dots:'dots pattern grid'});
+Object.keys(LIB).forEach(k => {
+  if(![...$('libsel').options].some(o => o.value === k)){ const o = document.createElement('option'); o.value = k; o.textContent = k[0].toUpperCase() + k.slice(1); $('libsel').appendChild(o); }
+});
+
+/* ---------- Text presets (generated from templates) ---------- */
+const rnd = a => a[Math.floor(R()*a.length)];
+const lc = s => s[0].toLowerCase() + s.slice(1);
+const LANG = {
+  stories: {s:['The cat','A little robot','My friend','The old farmer','A bird','The teacher','Our dog','The girl'], v:['sees','finds','likes','wants','watches','loves','remembers'], o:['a red ball','the big tree','a warm blanket','some fresh bread','the quiet river','a small boat','the bright moon','an old book'], p:['in the garden','by the river','at the market','near the school','on the hill','in the kitchen','under the bridge'], t:['Today','Every morning','Last night','After lunch','On Sunday','Once upon a time']},
+  es: {s:['El gato','La niña','Mi amigo','El perro','La profesora','El viejo granjero'], v:['ve','busca','quiere','encuentra','mira','recuerda'], o:['una pelota roja','el árbol grande','un libro viejo','la luna brillante','pan fresco','una manta caliente'], p:['en el jardín','cerca del río','en la escuela','en la cocina','junto al mercado'], t:['Hoy','Cada mañana','Anoche','Después del almuerzo']},
+  fr: {s:['Le chat','La fille','Mon ami','Le chien','Le professeur','Le vieux fermier'], v:['voit','cherche','veut','trouve','regarde','aime'], o:['une balle rouge','le grand arbre','un vieux livre','la lune brillante','du pain frais','une couverture chaude'], p:['dans le jardin','près de la rivière','à l’école','dans la cuisine','près du marché'], t:['Aujourd’hui','Chaque matin','Hier soir','Après le déjeuner']},
+  de: {s:['Die Katze','Das Mädchen','Mein Freund','Der Hund','Die Lehrerin'], v:['sieht','sucht','mag','findet'], o:['einen roten Ball','den großen Baum','ein altes Buch','den hellen Mond','frisches Brot','eine warme Decke'], p:['im Garten','am Fluss','in der Schule','in der Küche','auf dem Markt'], t:[]}
+};
+function sent(lang, n){
+  const L = LANG[lang]; let out = '';
+  for(let i=0;i<n;i++){
+    out += (L.t.length && R() < .4 ? rnd(L.t) + ', ' + lc(rnd(L.s)) : rnd(L.s)) + ' ' + rnd(L.v) + ' ' + rnd(L.o) + ' ' + rnd(L.p) + '. ';
+    if(i%6 === 5) out += '\n\n';
+  }
+  return out;
+}
+const QA = [['How are you today?','I am very well, thank you.'],['Where do you live?','I live in a small town near the sea.'],['What do you like to eat?','I like soup and fresh bread.'],['Do you have a pet?','Yes, I have a dog and two cats.'],['What time is it?','It is almost noon.'],['What is the weather like?','It is sunny and warm today.'],['Can you help me?','Of course, I would be happy to help.'],['What did you do yesterday?','I walked by the river and read a book.']];
+const NUM = ['zero','one','two','three','four','five','six','seven','eight','nine','ten'];
+const ANI = ['Cats','Dogs','Birds','Fish','Horses','Rabbits','Bees','Cows'];
+const ANF = ['need food and water every day','like to play in the sun','can sleep for many hours','live in many parts of the world','have a good sense of smell','are kind to their friends','can move very fast'];
+const GEN = {
+  stories: () => sent('stories',6), es: () => sent('es',6), fr: () => sent('fr',6), de: () => sent('de',6),
+  chat: () => { const n = ['Anna','Ben','Sara','Tom'].sort(() => R()-.5), p = rnd(QA); return n[0] + ': Hello! ' + p[0] + '\n' + n[1] + ': ' + p[1] + '\n\n'; },
+  animals: () => rnd(ANI) + ' ' + rnd(ANF) + '. ',
+  maths: () => { const a = Math.floor(R()*10), b = Math.floor(R()*(11-a)); return NUM[a] + ' plus ' + NUM[b] + ' is ' + NUM[a+b] + '. '; }
+};
+$('tadd').onclick = () => {
+  const k = $('tpre').value, kinds = k === 'mix' ? ['stories','es','fr','de'] : [k], target = k === 'mix' ? 1500 : 4000;
+  let out = '';
+  kinds.forEach(kk => { let t = ''; while(t.length < target) t += GEN[kk](); out += t + '\n\n'; });
+  const cv = $('corpus'); cv.value += (cv.value ? '\n\n' : '') + out.trim(); updateT();
+};
+
+/* ---------- Import models trained in Google Colab ---------- */
+async function readBundle(file){
+  const buf = await file.arrayBuffer();
+  const hl = new DataView(buf).getUint32(0,true);
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf,4,hl)));
+  return {head, data: new Float32Array(buf.slice(4+hl))};
+}
+function takeWeights(data, shapes){
+  let o = 0;
+  return shapes.map(sh => { const n = sh.reduce((a,b) => a*b, 1); const t = tf.tensor(data.slice(o,o+n), sh); o += n; return t; });
+}
+$('iimp').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0]; if(!f) return;
+  try{
+    if(typeof tf === 'undefined') throw new Error('The AI library has not loaded.');
+    const b = await readBundle(f);
+    if(b.head.type !== 'image' || b.head.shapes.length !== 12) throw new Error('That is not an image model file from the Colab notebook.');
+    if(auto) auto.dispose();
+    S = b.head.S; D = S*S*3; build();
+    const ws = takeWeights(b.data, b.head.shapes);
+    encoder.setWeights(ws.slice(0,6)); decoder.setWeights(ws.slice(6)); ws.forEach(t => t.dispose());
+    cache = {L: b.head.L, labels: b.head.labels};
+    if(![...$('res').options].some(o => +o.value === S)){ const o = document.createElement('option'); o.value = S; o.textContent = S + ' px'; $('res').appendChild(o); }
+    $('res').value = S; $('gen').disabled = false;
+    await generate();
+    $('pnote').textContent = 'Imported your Colab model (' + b.head.L.length + ' images, ' + S + ' px).';
+    $('status').textContent = 'Using a model trained in Colab.';
+  }catch(err){ $('pnote').textContent = 'Could not import: ' + err.message; }
+  e.target.value = '';
+});
+function mkText(V){
+  const m = tf.sequential();
+  m.add(tf.layers.embedding({inputDim:V,outputDim:16,inputLength:TW}));
+  m.add(tf.layers.flatten());
+  m.add(tf.layers.dense({units:256,activation:'relu'}));
+  m.add(tf.layers.dense({units:V,activation:'softmax'}));
+  m.compile({optimizer:tf.train.adam(0.004),loss:'categoricalCrossentropy'});
+  return m;
+}
+$('timp').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0]; if(!f) return;
+  try{
+    if(typeof tf === 'undefined') throw new Error('The AI library has not loaded.');
+    const b = await readBundle(f);
+    if(b.head.type !== 'text' || b.head.TW !== TW) throw new Error('That is not a text model file from the Colab notebook.');
+    if(tm){ tm.dispose(); tm = null; }
+    tvocab = b.head.vocab; tmap = {}; tvocab.forEach((c,i) => tmap[c] = i);
+    tm = mkText(tvocab.length);
+    const ws = takeWeights(b.data, b.head.shapes);
+    tm.setWeights(ws); ws.forEach(t => t.dispose());
+    $('tgo').disabled = false;
+    $('tstatus').textContent = 'Imported your Colab text model (' + tvocab.length + ' characters known). Type a prompt and press Write.';
+  }catch(err){ $('tstatus').textContent = 'Could not import: ' + err.message; }
+  e.target.value = '';
+});
+
+$('addlib').onclick = () => {
+  const sel = $('libsel').value, todo = [];
+  if(sel === 'all') Object.keys(LIB).forEach(n => { for(let i=0;i<4;i++) todo.push(n); });
+  else for(let i=0;i<30;i++) todo.push(sel);
+  const keep = $('lbl').value;
+  todo.forEach(n => {
+    const c = document.createElement('canvas'); c.width = c.height = MAXS;
+    LIB[n](c.getContext('2d'), MAXS);
+    $('lbl').value = LIBLBL[n]; addCanvas(c);
+  });
+  $('lbl').value = keep; updateCount();
+};
+$('tlen').oninput = e => $('tlenv').textContent = e.target.value;
+$('tstop').onclick = () => { if(tm) tm.stopTraining = true; };
+$('tsave').onclick = async () => {
+  try{
+    if(!tm){ $('tstatus').textContent = 'Train a text model first.'; return; }
+    await tm.save('indexeddb://text-model');
+    localStorage.setItem('text-vocab', JSON.stringify(tvocab));
+    $('tstatus').textContent = 'Saved in this browser.';
+  }catch(e){ $('tstatus').textContent = 'Could not save: ' + e.message; }
+};
+$('tload').onclick = async () => {
+  try{
+    const m = await tf.loadLayersModel('indexeddb://text-model');
+    const v = JSON.parse(localStorage.getItem('text-vocab'));
+    if(!v) throw new Error('none');
+    if(tm) tm.dispose();
+    tm = m; tvocab = v; tmap = {}; tvocab.forEach((c,i)=>tmap[c]=i);
+    $('tgo').disabled = false;
+    $('tstatus').textContent = 'Loaded your saved text model.';
+  }catch(e){ $('tstatus').textContent = 'Nothing saved yet, or it could not be loaded.'; }
+};
+</script>
+</body>
+</html>
