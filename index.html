@@ -63,6 +63,7 @@ select{padding:9px 10px;border-radius:10px;border:1px solid var(--line);backgrou
 <div class="card">
 <h2><span class="step">2</span>Train the model</h2>
 <div class="row">
+<label>Model size: <select id="msize"><option value="tiny">Tiny (fast)</option><option value="bigger">Bigger (slower)</option></select></label>
 <label><input type="checkbox" id="keep" checked> Keep what it learned before</label>
 <label><input type="checkbox" id="aug"> Extra variations (slower)</label>
 <label>Image detail: <select id="res"><option value="16">16 px (fastest)</option><option value="24">24 px</option><option value="32" selected>32 px</option><option value="48">48 px (slowest, sharpest)</option></select></label>
@@ -86,11 +87,12 @@ select{padding:9px 10px;border-radius:10px;border:1px solid var(--line);backgrou
 <label>Creativity: <input id="creat" type="range" min="0" max="2" step="0.1" value="0.8"> <b id="crv">0.8</b></label>
 <button id="gen" disabled>Generate</button>
 <button class="alt" id="isave">Save</button>
+<button class="alt" id="iexp">Export</button>
 <button class="alt" id="iload">Load saved</button>
 <button class="alt" id="cmp">What it learned</button>
 <button class="alt" id="sheet">Save as picture</button>
 <button class="alt" id="mix">Mix two</button>
-<label class="btn alt" style="position:relative;overflow:hidden">Import from Colab<input id="iimp" type="file" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px"></label>
+<label class="btn alt" style="position:relative;overflow:hidden">Import file<input id="iimp" type="file" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px"></label>
 </div>
 <div class="out" id="out"></div>
 <div class="out" id="cmpout"></div>
@@ -114,6 +116,7 @@ select{padding:9px 10px;border-radius:10px;border:1px solid var(--line);backgrou
 <div class="card">
 <h2><span class="step">2</span>Train the text model</h2>
 <div class="row">
+<label>Model size: <select id="tsize"><option value="tiny">Tiny (fast)</option><option value="bigger">Bigger (slower)</option></select></label>
 <label><input type="checkbox" id="tkeep" checked> Keep what it learned before</label>
 <label>Training rounds: <input id="tep" type="range" min="10" max="100" step="10" value="40"> <b id="tepv">40</b></label>
 <button id="ttrain">Train</button>
@@ -131,9 +134,10 @@ select{padding:9px 10px;border-radius:10px;border:1px solid var(--line);backgrou
 <label>Length: <input id="tlen" type="range" min="100" max="1000" step="100" value="300"> <b id="tlenv">300</b></label>
 <button id="tgo" disabled>Write</button>
 <button class="alt" id="tsave">Save</button>
+<button class="alt" id="texp">Export</button>
 <button class="alt" id="tload">Load saved</button>
 <button class="alt" id="tcopy">Copy</button>
-<label class="btn alt" style="position:relative;overflow:hidden">Import from Colab<input id="timp" type="file" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px"></label>
+<label class="btn alt" style="position:relative;overflow:hidden">Import file<input id="timp" type="file" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px"></label>
 </div>
 <div class="tout" id="tout"></div>
 <p class="muted">This is a tiny model that learns patterns in your text, so it writes in your text’s style but won’t make much sense. It works best with lots of text.</p>
@@ -142,7 +146,9 @@ select{padding:9px 10px;border-radius:10px;border:1px solid var(--line);backgrou
 </main>
 
 <script>
-let S = 32, D = S*S*3; const LAT = 16, MAXS = 64; let srcs = [];
+let S = 32, D = S*S*3, LAT = 16; const MAXS = 64; let srcs = [];
+const ARCH = {tiny:{enc:[384,96],lat:16}, bigger:{enc:[768,384,128],lat:32}};
+let curKey = 'tiny';
 function toArr(src){
   const cv = document.createElement('canvas'); cv.width = cv.height = S;
   const g = cv.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(src,0,0,S,S);
@@ -223,16 +229,17 @@ $('clear').onclick = () => { imgs=[]; srcs=[]; labels=[]; $('thumbs').innerHTML=
 $('epochs').oninput = e => $('epv').textContent = e.target.value;
 $('creat').oninput = e => $('crv').textContent = e.target.value;
 
-function build(){
+function build(key){
+  key = key || 'tiny'; curKey = key; const A = ARCH[key]; LAT = A.lat;
   try{ tf.env().set('WEBGL_DELETE_TEXTURE_THRESHOLD',0); }catch(e){}
   const inp = tf.input({shape:[D]});
-  let h = tf.layers.dense({units:384,activation:'relu'}).apply(inp);
-  h = tf.layers.dense({units:96,activation:'relu'}).apply(h);
+  let h = inp;
+  A.enc.forEach(u => { h = tf.layers.dense({units:u,activation:'relu'}).apply(h); });
   const z = tf.layers.dense({units:LAT}).apply(h);
   encoder = tf.model({inputs:inp,outputs:z});
   const zin = tf.input({shape:[LAT]});
-  let g = tf.layers.dense({units:96,activation:'relu'}).apply(zin);
-  g = tf.layers.dense({units:384,activation:'relu'}).apply(g);
+  let g = zin;
+  [...A.enc].reverse().forEach(u => { g = tf.layers.dense({units:u,activation:'relu'}).apply(g); });
   const o = tf.layers.dense({units:D,activation:'sigmoid'}).apply(g);
   decoder = tf.model({inputs:zin,outputs:o});
   auto = tf.model({inputs:inp,outputs:decoder.apply(encoder.apply(inp))});
@@ -248,10 +255,11 @@ $('train').onclick = async () => {
   if(typeof tf === 'undefined'){ $('status').textContent = 'The AI library could not load. Connect to the internet once, or put tf.min.js in the same folder as this file.'; return; }
   if(imgs.length<4){ $('status').textContent='Add at least 4 images first (10 or more is better).'; return; }
   training = true; $('train').disabled = true; $('gen').disabled = true; $('stop').disabled = false; cache = null;
-  const cont = $('keep').checked && auto && S === +$('res').value;
+  const cont = $('keep').checked && auto && S === +$('res').value && curKey === $('msize').value;
+  const why = (!cont && $('keep').checked && auto) ? ' It started fresh because you changed the image detail or model size.' : '';
   if(!cont){ if(auto){ auto.dispose(); encoder=decoder=auto=null; } S = +$('res').value; D = S*S*3; }
   imgs = srcs.map(c => toArr(c));
-  if(!cont) build();
+  if(!cont) build($('msize').value);
   let all = [...imgs, ...imgs.map(flip)];
   if($('aug').checked) all = all.concat(imgs.map(jitter), imgs.map(a => jitter(flip(a))));
   const flat = new Float32Array(all.length*D);
@@ -260,14 +268,16 @@ $('train').onclick = async () => {
   const E = +$('epochs').value;
   const t0 = performance.now();
   try{
+    auto.stopTraining = false;
     await auto.fit(X,X,{epochs:E,batchSize:32,shuffle:true,callbacks:{
       onEpochEnd: async (ep,logs) => {
         $('prog').style.width = ((ep+1)/E*100)+'%';
         const el = (performance.now()-t0)/1000, left = Math.max(0, el/(ep+1)*(E-ep-1));
-        $('status').textContent = `Round ${ep+1} of ${E} · error: ${logs.loss.toFixed(4)} · about ${Math.ceil(left)}s left · ${tf.getBackend()}`;
+        $('status').textContent = `${cont ? 'Continuing' : 'New model'} · Round ${ep+1} of ${E} · error: ${logs.loss.toFixed(4)} · about ${Math.ceil(left)}s left · ${tf.getBackend()}`;
         if(ep%5===0) await tf.nextFrame();
       }}});
-    $('status').textContent = 'Training finished. Press Generate.';
+    $('status').textContent = 'Training finished. Press Generate.' + why;
+    autoSaveImage();
     $('gen').disabled = false;
     await generate();
   }catch(err){ $('status').textContent = 'Something went wrong: '+err.message; }
@@ -288,7 +298,7 @@ async function generate(base){
   const creat = +$('creat').value;
   const out = $('out'); out.innerHTML='';
   if(!cache) await buildCache();
-  const L = cache.L, labels = cache.labels; updateChips(labels);
+  const L = cache.L, labels = cache.labels; updateChips(labels); LAT = L[0].length;
   const std = Array.from({length:LAT},(_,k)=>{
     const m = L.reduce((s,r)=>s+r[k],0)/L.length;
     return Math.sqrt(L.reduce((s,r)=>s+(r[k]-m)**2,0)/L.length)+1e-3;
@@ -317,10 +327,10 @@ async function generate(base){
 }
 $('gen').onclick = () => { mixMode = false; mixPick = []; generate(); };
 $('stop').onclick = () => { if(auto) auto.stopTraining = true; };
-async function restoreImgs(){
+async function restoreImgs(given){
   try{
-    const raw = localStorage.getItem('img-data'); if(!raw) return;
-    const d = JSON.parse(raw), keepLbl = $('lbl').value;
+    let d = given; if(!d){ const raw = localStorage.getItem('img-data'); if(!raw) return; d = JSON.parse(raw); }
+    const keepLbl = $('lbl').value;
     srcs = []; imgs = []; labels = []; $('thumbs').innerHTML = '';
     for(let i=0;i<d.imgs.length;i++){
       const im = await new Promise((res,rej)=>{ const x = new Image(); x.onload = () => res(x); x.onerror = rej; x.src = d.imgs[i]; });
@@ -335,6 +345,7 @@ $('isave').onclick = async () => {
   try{
     if(!decoder){ $('pnote').textContent = 'Train a model first.'; return; }
     if(!cache) await buildCache();
+    localStorage.setItem('img-arch', curKey);
     await encoder.save('indexeddb://img-encoder');
     await decoder.save('indexeddb://img-decoder');
     localStorage.setItem('img-cache', JSON.stringify({L: cache.L.map(r=>r.map(v=>+v.toFixed(3))), labels: cache.labels}));
@@ -355,6 +366,8 @@ $('iload').onclick = async () => {
     auto = tf.model({inputs:inp,outputs:decoder.apply(encoder.apply(inp))});
     auto.compile({optimizer:tf.train.adam(0.002),loss:'meanSquaredError'});
     if([16,24,32,48].includes(S)) $('res').value = S;
+    curKey = localStorage.getItem('img-arch') || 'tiny';
+    if([...$('msize').options].some(o => o.value === curKey)) $('msize').value = curKey;
     await restoreImgs();
     await generate();
     $('pnote').textContent = 'Loaded your saved model.';
@@ -372,7 +385,8 @@ $('tabI').onclick = () => showTab('i');
 $('tabT').onclick = () => showTab('t');
 
 /* ---------- Text AI (character model) ---------- */
-const TW = 16;
+let TW = 16, tKey = 'tiny';
+const TARCH = {tiny:{TW:16,emb:16,hid:[256]}, bigger:{TW:32,emb:32,hid:[512,256]}};
 let tm = null, tvocab = [], tmap = {}, tTraining = false;
 const SAMPLE = 'The little robot woke up in the garden. It looked at the flowers and the bees. The sun was warm and the grass was soft. The robot wanted to learn about the world, so it asked the bees where they were going. The bees said they were going to find the best flowers. The robot followed them across the garden, past the old wooden fence and the tall green trees. At the end of the path there was a small pond. A frog sat on a leaf and watched the water. The robot sat next to the frog and the two of them watched the sky turn orange. When the stars came out, the robot smiled. It had learned that the world is big, and that the best way to learn is to go and look. ';
 function updateT(){ $('tcount').textContent = $('corpus').value.length.toLocaleString() + ' characters. Aim for at least 2,000.'; }
@@ -392,32 +406,31 @@ $('ttrain').onclick = async () => {
   const txt = $('corpus').value;
   if(txt.length < 300){ $('tstatus').textContent = 'Add at least 300 characters of text first (2,000 or more is better).'; return; }
   tTraining = true; $('ttrain').disabled = true; $('tgo').disabled = true; $('tstop').disabled = false;
-  const tcont = $('tkeep').checked && !!tm;
+  const tcont = $('tkeep').checked && !!tm && tKey === $('tsize').value;
+  const twhy = (!tcont && $('tkeep').checked && tm) ? ' It started fresh because you changed the model size.' : '';
   let chars = Array.from(txt);
   if(tcont) chars = chars.filter(c => tmap[c] !== undefined);
   if(chars.length < 100){ $('tstatus').textContent = 'Not enough usable text. When continuing, it can only use characters the model already knows.'; tTraining = false; $('ttrain').disabled = false; $('tstop').disabled = true; $('tgo').disabled = !tm; return; }
-  if(!tcont){ if(tm){ tm.dispose(); tm = null; } tvocab = [...new Set(chars)].sort(); tmap = {}; tvocab.forEach((c,i)=>tmap[c]=i); }
+  if(!tcont){ if(tm){ tm.dispose(); tm = null; } tKey = $('tsize').value; TW = TARCH[tKey].TW; tvocab = [...new Set(chars)].sort(); tmap = {}; tvocab.forEach((c,i)=>tmap[c]=i); }
   const V = tvocab.length, ids = chars.map(c=>tmap[c]);
   const n = ids.length - TW, step = Math.max(1, Math.floor(n/20000)), xs = [], ys = [];
   for(let i=0;i<n;i+=step){ xs.push(ids.slice(i,i+TW)); ys.push(ids[i+TW]); }
   const X = tf.tensor2d(xs,[xs.length,TW]);
   const Y = tf.oneHot(tf.tensor1d(ys,'int32'),V).toFloat();
-  if(!tcont){ tm = tf.sequential();
-  tm.add(tf.layers.embedding({inputDim:V,outputDim:16,inputLength:TW}));
-  tm.add(tf.layers.flatten());
-  tm.add(tf.layers.dense({units:256,activation:'relu'}));
-  tm.add(tf.layers.dense({units:V,activation:'softmax'})); }
+  if(!tcont){ tm = mkText(V, TARCH[tKey]); }
   tm.compile({optimizer:tf.train.adam(0.004),loss:'categoricalCrossentropy'});
   const E = +$('tep').value, t0 = performance.now();
   try{
+    tm.stopTraining = false;
     await tm.fit(X,Y,{epochs:E,batchSize:128,shuffle:true,callbacks:{
       onEpochEnd: async (ep,logs) => {
         const el = (performance.now()-t0)/1000, left = Math.max(0, el/(ep+1)*(E-ep-1));
         $('tprog').style.width = ((ep+1)/E*100)+'%';
-        $('tstatus').textContent = `Round ${ep+1} of ${E} · error: ${logs.loss.toFixed(3)} · about ${Math.ceil(left)}s left`;
+        $('tstatus').textContent = `${tcont ? 'Continuing' : 'New model'} · Round ${ep+1} of ${E} · error: ${logs.loss.toFixed(3)} · about ${Math.ceil(left)}s left`;
         if(ep%3===0) await tf.nextFrame();
       }}});
-    $('tstatus').textContent = 'Training finished. Type a prompt and press Write.';
+    $('tstatus').textContent = 'Training finished. Type a prompt and press Write.' + twhy;
+    autoSaveText();
     $('tgo').disabled = false;
     await tgen();
   }catch(err){ $('tstatus').textContent = 'Something went wrong: ' + err.message; }
@@ -506,6 +519,7 @@ $('reset').onclick = () => {
   auto = encoder = decoder = null; cache = null;
   $('gen').disabled = true; $('prog').style.width = '0';
   $('status').textContent = 'Model cleared. Your images are still loaded. Press Train to start fresh.';
+  kv.set('auto-image', null).catch(() => {});
 };
 
 /* ---------- Extras: compare, save as picture, copy ---------- */
@@ -620,25 +634,29 @@ $('iimp').addEventListener('change', async e => {
   try{
     if(typeof tf === 'undefined') throw new Error('The AI library has not loaded.');
     const b = await readBundle(f);
-    if(b.head.type !== 'image' || b.head.shapes.length !== 12) throw new Error('That is not an image model file from the Colab notebook.');
+    if(b.head.type !== 'image' || b.head.shapes.length !== 4*((b.head.arch || ARCH.tiny).enc.length+1)) throw new Error('That is not an image model file from the Colab notebook.');
     if(auto) auto.dispose();
-    S = b.head.S; D = S*S*3; build();
+    S = b.head.S; D = S*S*3; ARCH.imported = b.head.arch || ARCH.tiny; build('imported');
     const ws = takeWeights(b.data, b.head.shapes);
-    encoder.setWeights(ws.slice(0,6)); decoder.setWeights(ws.slice(6)); ws.forEach(t => t.dispose());
+    const nw = ws.length/2; encoder.setWeights(ws.slice(0,nw)); decoder.setWeights(ws.slice(nw)); ws.forEach(t => t.dispose());
     cache = {L: b.head.L, labels: b.head.labels};
     if(![...$('res').options].some(o => +o.value === S)){ const o = document.createElement('option'); o.value = S; o.textContent = S + ' px'; $('res').appendChild(o); }
     $('res').value = S; $('gen').disabled = false;
+    const mk = Object.keys(ARCH).find(k => k !== 'imported' && JSON.stringify(ARCH[k]) === JSON.stringify(ARCH.imported));
+    if(mk){ curKey = mk; $('msize').value = mk; }
+    if(b.head.imgs) await restoreImgs({imgs: b.head.imgs, labels: b.head.imgLabels || []});
     await generate();
-    $('pnote').textContent = 'Imported your Colab model (' + b.head.L.length + ' images, ' + S + ' px).';
-    $('status').textContent = 'Using a model trained in Colab.';
-  }catch(err){ $('pnote').textContent = 'Could not import: ' + err.message; }
+    $('pnote').textContent = restoreI ? 'Welcome back: restored your last session. You can keep training from where you left off.' : 'Imported your model (' + b.head.L.length + ' images, ' + S + ' px).'; restoreI = false;
+    $('status').textContent = 'Model loaded. Press Train to keep training it.';
+  }catch(err){ restoreI = false; $('pnote').textContent = 'Could not import: ' + err.message; }
   e.target.value = '';
 });
-function mkText(V){
+function mkText(V, a){
+  a = a || TARCH.tiny;
   const m = tf.sequential();
-  m.add(tf.layers.embedding({inputDim:V,outputDim:16,inputLength:TW}));
+  m.add(tf.layers.embedding({inputDim:V,outputDim:a.emb,inputLength:a.TW}));
   m.add(tf.layers.flatten());
-  m.add(tf.layers.dense({units:256,activation:'relu'}));
+  a.hid.forEach(u => m.add(tf.layers.dense({units:u,activation:'relu'})));
   m.add(tf.layers.dense({units:V,activation:'softmax'}));
   m.compile({optimizer:tf.train.adam(0.004),loss:'categoricalCrossentropy'});
   return m;
@@ -648,17 +666,55 @@ $('timp').addEventListener('change', async e => {
   try{
     if(typeof tf === 'undefined') throw new Error('The AI library has not loaded.');
     const b = await readBundle(f);
-    if(b.head.type !== 'text' || b.head.TW !== TW) throw new Error('That is not a text model file from the Colab notebook.');
+    if(b.head.type !== 'text') throw new Error('That is not a text model file from the Colab notebook.');
+    const ta = b.head.arch || TARCH.tiny;
     if(tm){ tm.dispose(); tm = null; }
     tvocab = b.head.vocab; tmap = {}; tvocab.forEach((c,i) => tmap[c] = i);
-    tm = mkText(tvocab.length);
+    TARCH.imported = ta; tKey = 'imported'; TW = ta.TW; tm = mkText(tvocab.length, ta);
+    const tk = Object.keys(TARCH).find(k => k !== 'imported' && JSON.stringify(TARCH[k]) === JSON.stringify(ta));
+    if(tk){ tKey = tk; $('tsize').value = tk; }
     const ws = takeWeights(b.data, b.head.shapes);
     tm.setWeights(ws); ws.forEach(t => t.dispose());
     $('tgo').disabled = false;
-    $('tstatus').textContent = 'Imported your Colab text model (' + tvocab.length + ' characters known). Type a prompt and press Write.';
-  }catch(err){ $('tstatus').textContent = 'Could not import: ' + err.message; }
+    $('tstatus').textContent = (restoreT ? 'Welcome back: restored your last text model. ' : 'Imported your text model. ') + tvocab.length + ' characters known. Press Write, or Train to keep teaching it.'; restoreT = false;
+  }catch(err){ restoreT = false; $('tstatus').textContent = 'Could not import: ' + err.message; }
   e.target.value = '';
 });
+
+/* ---------- Export (downloads a file you can import again) ---------- */
+function downloadBlob(parts, name){
+  const u = URL.createObjectURL(new Blob(parts, {type: 'application/octet-stream'}));
+  const a = document.createElement('a'); a.href = u; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 15000);
+}
+function makeBundle(head, tensors){
+  const hb = new TextEncoder().encode(JSON.stringify(head));
+  const len = new Uint8Array(4); new DataView(len.buffer).setUint32(0, hb.length, true);
+  return [len, hb, ...tensors.map(t => t.dataSync())];
+}
+$('iexp').onclick = async () => {
+  try{
+    if(!encoder || !decoder){ $('pnote').textContent = 'Train or load a model first.'; return; }
+    if(!cache) await buildCache();
+    const dl = encoder.layers.filter(l => l.getClassName() === 'Dense');
+    const arch = {enc: dl.slice(0,-1).map(l => l.units), lat: dl[dl.length-1].units};
+    const ts = [...encoder.getWeights(), ...decoder.getWeights()];
+    const head = {type: 'image', S, arch, labels: cache.labels, L: cache.L.map(r => r.map(v => +v.toFixed(3))), shapes: ts.map(t => t.shape)};
+    if(srcs.length){ head.imgs = srcs.map(c => c.toDataURL('image/jpeg', 0.85)); head.imgLabels = [...labels]; }
+    downloadBlob(makeBundle(head, ts), 'my-image-ai.bin');
+    $('pnote').textContent = 'Exported my-image-ai.bin (it includes your images). To load it later, press Import file.';
+  }catch(e){ $('pnote').textContent = 'Could not export: ' + e.message; }
+};
+$('texp').onclick = () => {
+  try{
+    if(!tm){ $('tstatus').textContent = 'Train or load a text model first.'; return; }
+    const ts = tm.getWeights();
+    const head = {type: 'text', vocab: tvocab, TW, arch: TARCH[tKey] || TARCH.tiny, shapes: ts.map(t => t.shape)};
+    downloadBlob(makeBundle(head, ts), 'my-text-ai.bin');
+    $('tstatus').textContent = 'Exported my-text-ai.bin. To load it later, press Import file.';
+  }catch(e){ $('tstatus').textContent = 'Could not export: ' + e.message; }
+};
 
 $('addlib').onclick = () => {
   const sel = $('libsel').value, todo = [];
@@ -679,6 +735,7 @@ $('tsave').onclick = async () => {
     if(!tm){ $('tstatus').textContent = 'Train a text model first.'; return; }
     await tm.save('indexeddb://text-model');
     localStorage.setItem('text-vocab', JSON.stringify(tvocab));
+    localStorage.setItem('text-arch', JSON.stringify(TARCH[tKey]));
     $('tstatus').textContent = 'Saved in this browser.';
   }catch(e){ $('tstatus').textContent = 'Could not save: ' + e.message; }
 };
@@ -689,10 +746,54 @@ $('tload').onclick = async () => {
     if(!v) throw new Error('none');
     if(tm) tm.dispose();
     tm = m; tvocab = v; tmap = {}; tvocab.forEach((c,i)=>tmap[c]=i);
+    const sa = JSON.parse(localStorage.getItem('text-arch') || 'null') || TARCH.tiny;
+    tKey = Object.keys(TARCH).find(k => JSON.stringify(TARCH[k]) === JSON.stringify(sa)) || 'loaded';
+    TARCH[tKey] = sa; TW = sa.TW;
     $('tgo').disabled = false;
     $('tstatus').textContent = 'Loaded your saved text model.';
   }catch(e){ $('tstatus').textContent = 'Nothing saved yet, or it could not be loaded.'; }
 };
+/* ---------- Auto-save after training, auto-restore on opening ---------- */
+let restoreI = false, restoreT = false;
+const kv = {
+  open(){ return new Promise((res,rej) => { const r = indexedDB.open('tyoai',1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); },
+  async set(k,v){ const db = await this.open(); return new Promise((res,rej) => { const t = db.transaction('kv','readwrite'); t.objectStore('kv').put(v,k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); },
+  async get(k){ const db = await this.open(); return new Promise((res,rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+};
+function setFile(input, buf, name){
+  const dt = new DataTransfer(); dt.items.add(new File([buf], name));
+  input.files = dt.files; input.dispatchEvent(new Event('change'));
+}
+async function imgParts(){
+  if(!cache) await buildCache();
+  const dl = encoder.layers.filter(l => l.getClassName() === 'Dense');
+  const arch = {enc: dl.slice(0,-1).map(l => l.units), lat: dl[dl.length-1].units};
+  const ts = [...encoder.getWeights(), ...decoder.getWeights()];
+  const head = {type: 'image', S, arch, labels: cache.labels, L: cache.L.map(r => r.map(v => +v.toFixed(3))), shapes: ts.map(t => t.shape)};
+  if(srcs.length){ head.imgs = srcs.map(c => c.toDataURL('image/jpeg', 0.85)); head.imgLabels = [...labels]; }
+  return makeBundle(head, ts);
+}
+async function autoSaveImage(){
+  try{ if(!encoder || !decoder) return; await kv.set('auto-image', await new Blob(await imgParts()).arrayBuffer()); }catch(e){}
+}
+async function autoSaveText(){
+  try{
+    if(!tm) return;
+    const ts = tm.getWeights();
+    const head = {type: 'text', vocab: tvocab, TW, arch: TARCH[tKey] || TARCH.tiny, shapes: ts.map(t => t.shape)};
+    await kv.set('auto-text', await new Blob(makeBundle(head, ts)).arrayBuffer());
+  }catch(e){}
+}
+(async () => {
+  try{
+    if(typeof tf === 'undefined') return;
+    await tf.ready();
+    const bi = await kv.get('auto-image');
+    if(bi && !decoder){ restoreI = true; setFile($('iimp'), bi, 'auto-image.bin'); }
+    const bt = await kv.get('auto-text');
+    if(bt && !tm){ restoreT = true; setFile($('timp'), bt, 'auto-text.bin'); }
+  }catch(e){}
+})();
 </script>
 </body>
 </html>
